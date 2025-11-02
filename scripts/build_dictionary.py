@@ -11,15 +11,15 @@ from src.dictionary.customdict import Dictionary
 
 
 def main():
-    print("downloading jmdict...")
-    download_url = 'http://ftp.edrdg.org/pub/Nihongo/JMdict.gz'
-    open('JMdict', 'wb').write(requests.get(download_url).content)
+    #print("downloading jmdict...")
+    #download_url = 'http://ftp.edrdg.org/pub/Nihongo/JMdict.gz'
+    #open('JMdict', 'wb').write(requests.get(download_url).content)
 
-    print("processing jmdict -> json...")
-    exec(open('scripts/process.py').read()) # python scripts/process.py - see https://github.com/wareya/nazeka/blob/master/etc/process.py
-    [shutil.copy(f, os.path.join('data', os.path.basename(f))) for f in glob.glob('JMdict*.json')] # mv JMdict*.json data
-    os.remove('JMdict') # rm JMdict
-    [os.remove(f) for f in glob.glob('JMdict*.json')] # rm JMdict*.json
+    #print("processing jmdict -> json...")
+    #exec(open('scripts/process.py').read()) # python scripts/process.py - see https://github.com/wareya/nazeka/blob/master/etc/process.py
+    #[shutil.copy(f, os.path.join('data', os.path.basename(f))) for f in glob.glob('JMdict*.json')] # mv JMdict*.json data
+    #os.remove('JMdict') # rm JMdict
+    #[os.remove(f) for f in glob.glob('JMdict*.json')] # rm JMdict*.json
 
     print("Starting dictionary build process...")
     data_dir = 'data'

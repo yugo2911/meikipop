@@ -4,7 +4,7 @@ import os
 import glob
 
 # Set folder where the term_bank files are located
-INPUT_FOLDER = r"C:\Users\rias\Documents\Projects\Github Desktop\meikipop\data\Dicitoanry Convert\PixivLight\PixivLight_2025-11-02"
+INPUT_FOLDER = r"define path"
 os.makedirs(os.path.join(INPUT_FOLDER, "converted"), exist_ok=True)
 OUTPUT_FILE = os.path.join(INPUT_FOLDER, "converted", "PixivLight_JMdict.json")
 
