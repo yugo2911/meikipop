@@ -11,10 +11,10 @@ import re
 from pathlib import Path
 
 
-def extract_text_from_structured_content(content, target_names=None):
+def extract_text_from_structured_content(content, skip_names=None):
     """
     Recursively extract text from structured content
-    If target_names is provided, only extract from elements with those names
+    If skip_names is provided, skip elements with those names
     """
     if content is None:
         return ''
@@ -25,17 +25,16 @@ def extract_text_from_structured_content(content, target_names=None):
     if isinstance(content, list):
         texts = []
         for item in content:
-            text = extract_text_from_structured_content(item, target_names)
+            text = extract_text_from_structured_content(item, skip_names)
             if text:
                 texts.append(text)
-        return ' '.join(texts)
+        return ''.join(texts)
     
     if isinstance(content, dict):
-        # Check if this element has a name we want to extract
-        if target_names:
+        # Check if this element should be skipped
+        if skip_names:
             elem_name = content.get('data', {}).get('name', '')
-            if elem_name not in target_names:
-                # Skip this element if it doesn't match target names
+            if elem_name in skip_names:
                 return ''
         
         # Skip image tags
@@ -44,17 +43,68 @@ def extract_text_from_structured_content(content, target_names=None):
         
         # Recursively extract from content
         if 'content' in content:
-            return extract_text_from_structured_content(content['content'], target_names)
+            return extract_text_from_structured_content(content['content'], skip_names)
     
     return ''
 
 
+def split_definitions_by_markers(text):
+    """
+    Split text into multiple definitions based on numbered markers
+    ① ② ③ or (1) (2) (3) or 1. 2. 3.
+    """
+    if not text:
+        return [text]
+    
+    # Look for circled numbers ①②③ or parenthesized numbers (1)(2)(3)
+    pattern = r'[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮]|\(\d+\)|\d+\s*[.、]'
+    
+    # Split but keep the markers
+    parts = re.split(f'({pattern})', text)
+    
+    definitions = []
+    current_def = ''
+    
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        
+        # Check if this is a marker
+        if re.match(pattern, part):
+            # Save previous definition if exists
+            if current_def.strip():
+                definitions.append(current_def.strip())
+            current_def = part + ' '
+        else:
+            current_def += part
+    
+    # Add the last definition
+    if current_def.strip():
+        definitions.append(current_def.strip())
+    
+    # If no splits happened, return as single definition
+    return definitions if len(definitions) > 1 else [text]
+
+
+def clean_definition_text(text):
+    """Clean up definition text"""
+    if not text:
+        return ''
+    
+    # Remove extra whitespace
+    text = re.sub(r'\s+', ' ', text)
+    text = text.strip()
+    
+    return text
+
+
 def extract_definitions_from_structured(structured_content):
-    """Extract definitions from structured content"""
+    """Extract definitions from structured content, handling multiple senses"""
     if not structured_content or not isinstance(structured_content, list):
         return []
     
-    definitions = []
+    all_definitions = []
     
     for def_item in structured_content:
         if not isinstance(def_item, dict):
@@ -67,23 +117,24 @@ def extract_definitions_from_structured(structured_content):
         if not isinstance(content, list):
             continue
         
-        # Look for 語釈 (definition) sections
-        def find_definitions(elem):
+        # Extract all definition text
+        def find_definitions(elem, depth=0):
             if not isinstance(elem, dict):
                 return
             
             name = elem.get('data', {}).get('name', '')
             
             # Extract from definition fields
-            if name in ['語釈', '語義', '解説']:
-                text = extract_text_from_structured_content(elem.get('content'))
+            if name in ['語釈', '語義', '解説', '意味']:
+                # Skip certain sub-elements that are metadata
+                skip_names = ['かぞえ方解説', 'かぞえ方解説M', '補足ロゴG', '補足ロゴ']
+                text = extract_text_from_structured_content(elem.get('content'), skip_names=skip_names)
                 if text and text.strip():
-                    # Clean up the text
-                    text = text.strip()
-                    # Remove extra whitespace
-                    text = re.sub(r'\s+', ' ', text)
+                    text = clean_definition_text(text)
                     if text:
-                        definitions.append(text)
+                        # Split by numbered markers if present
+                        split_defs = split_definitions_by_markers(text)
+                        all_definitions.extend(split_defs)
                 return
             
             # Recursively search
@@ -91,14 +142,14 @@ def extract_definitions_from_structured(structured_content):
                 content = elem['content']
                 if isinstance(content, list):
                     for item in content:
-                        find_definitions(item)
+                        find_definitions(item, depth + 1)
                 else:
-                    find_definitions(content)
+                    find_definitions(content, depth + 1)
         
         for elem in content:
             find_definitions(elem)
     
-    return definitions if definitions else ['']
+    return all_definitions if all_definitions else ['']
 
 
 def extract_reading_from_structured(structured_content):
@@ -122,7 +173,9 @@ def extract_reading_from_structured(structured_content):
                 if elem.get('data', {}).get('name') == '見出仮名':
                     text = extract_text_from_structured_content(elem.get('content'))
                     if text:
-                        return text.strip()
+                        # Clean up reading (remove spaces and special chars)
+                        text = text.strip().replace(' ', '').replace('　', '')
+                        return text
     
     return None
 
@@ -150,10 +203,14 @@ def extract_part_of_speech_from_structured(structured_content):
             name = elem.get('data', {}).get('name', '')
             
             # Look for part of speech indicators
-            if name in ['品詞', 'hinshi', 'FM']:
+            if name in ['品詞', 'hinshi', 'FM', '品詞G']:
                 text = extract_text_from_structured_content(elem.get('content'))
                 if text and text.strip():
-                    pos_list.append(text.strip())
+                    cleaned = text.strip()
+                    # Remove the 〘 〙 brackets if present
+                    cleaned = cleaned.replace('〘', '').replace('〙', '').strip()
+                    if cleaned:
+                        pos_list.append(cleaned)
                 return
             
             # Recursively search
@@ -192,7 +249,7 @@ def convert_entry_to_jmdict(entry, index, base_seq=50000):
         seq = entry[6] if len(entry) > 6 else None
         term_tags = entry[7] if len(entry) > 7 else ''
         
-        # If reading is empty or just katakana version of term, try to extract from structured content
+        # If reading is empty or same as term, try to extract from structured content
         if not reading or reading == term:
             extracted_reading = extract_reading_from_structured(definitions)
             if extracted_reading:
@@ -200,7 +257,7 @@ def convert_entry_to_jmdict(entry, index, base_seq=50000):
         
         # Clean up reading (remove spaces)
         if reading:
-            reading = reading.replace(' ', '')
+            reading = reading.replace(' ', '').replace('　', '')
         
         # Create JMdict entry
         jmdict_entry = {
@@ -235,30 +292,38 @@ def convert_entry_to_jmdict(entry, index, base_seq=50000):
         glosses = extract_definitions_from_structured(definitions)
         pos_array = extract_part_of_speech_from_structured(definitions)
         
-        # Create sense entries
-        sense = {}
+        # Create sense entries - one per definition if multiple definitions found
+        senses = []
         
-        # Add part of speech if found
-        if pos_array:
-            sense['pos'] = pos_array
+        # If we have multiple definitions, create separate senses
+        valid_glosses = [g for g in glosses if g and g.strip()]
         
-        # Add misc tags
-        misc = []
-        if def_tags and def_tags.strip():
-            misc.append(def_tags.strip())
-        if rules and rules.strip():
-            misc.append(rules.strip())
-        if misc:
-            sense['misc'] = misc
-        
-        # Add glosses as simple strings
-        if glosses and any(g for g in glosses):
-            sense['gloss'] = [g for g in glosses if g]
-        else:
-            # If no definitions found, skip this entry
+        if not valid_glosses:
+            # No definitions found, skip this entry
             return None, False
         
-        jmdict_entry['sense'] = [sense]
+        for gloss in valid_glosses:
+            sense = {}
+            
+            # Add part of speech (same for all senses in this entry)
+            if pos_array:
+                sense['pos'] = pos_array
+            
+            # Add misc tags
+            misc = []
+            if def_tags and def_tags.strip():
+                misc.append(def_tags.strip())
+            if rules and rules.strip():
+                misc.append(rules.strip())
+            if misc:
+                sense['misc'] = misc
+            
+            # Add the gloss
+            sense['gloss'] = [gloss]
+            
+            senses.append(sense)
+        
+        jmdict_entry['sense'] = senses
         
         return jmdict_entry, True
     
@@ -353,7 +418,7 @@ def main():
     # Also create a pretty-printed version for inspection
     preview_file = 'JMdict_converted_preview.json'
     with open(preview_file, 'w', encoding='utf-8', newline='\n') as f:
-        json.dump(all_entries[:5], f, ensure_ascii=False, indent=2)
+        json.dump(all_entries[:10], f, ensure_ascii=False, indent=2)
     
     # Summary
     print()
@@ -365,7 +430,7 @@ def main():
     print(f"Total entries skipped: {total_skipped}")
     print(f"Output file: {output_file}")
     print(f"File size: {os.path.getsize(output_file) / 1024 / 1024:.2f} MB")
-    print(f"Preview file (first 5 entries): {preview_file}")
+    print(f"Preview file (first 10 entries): {preview_file}")
     print()
     print("✓ Conversion complete!")
     print(f"\nMove {output_file} to your data/ folder to use it.")
