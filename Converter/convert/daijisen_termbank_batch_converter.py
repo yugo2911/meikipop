@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Daijisen Term Bank to JMDict Batch Converter
-Processes multiple term_bank_*.json files and converts them to JMDict format
-Optimized for 大辞泉 dictionary structure with filtered, concise output
+Enhanced with filtering for proper nouns, media titles, and excessive definitions
 """
 
 import json
@@ -12,7 +11,7 @@ from pathlib import Path
 
 
 def extract_all_text(elem, skip_tags=None):
-    """Extract all text from element, skipping certain tags"""
+    """Extract all text from element"""
     if elem is None:
         return ''
     
@@ -23,23 +22,95 @@ def extract_all_text(elem, skip_tags=None):
         return ''.join(extract_all_text(item, skip_tags) for item in elem)
     
     if isinstance(elem, dict):
-        # Skip img tags
         if elem.get('tag') == 'img':
             return ''
         
-        # Skip certain tagged elements
         if skip_tags and elem.get('tag') in skip_tags:
             return ''
         
-        # Extract from content
         if 'content' in elem:
             return extract_all_text(elem['content'], skip_tags)
     
     return ''
 
 
+def is_proper_noun_entry(text):
+    """Check if entry is primarily a proper noun (place, person, title)"""
+    if not text:
+        return False
+    
+    # Check for place name patterns
+    place_patterns = [
+        r'市の区名',
+        r'区の.*の区名',
+        r'市の地名',
+        r'都の.*区',
+        r'県の.*市',
+        r'の旧地名',
+        r'^アクセント\s+[ぁ-ん]+\s+\d+',  # Just accent info
+    ]
+    
+    for pattern in place_patterns:
+        if re.search(pattern, text):
+            return True
+    
+    # Check if it's mostly a list of place names
+    place_markers = ['市の', '区の', '県の', '町の', '村の']
+    if sum(1 for m in place_markers if m in text) >= 2:
+        return True
+    
+    return False
+
+
+def is_media_title_entry(text):
+    """Check if entry is primarily a media title"""
+    if not text:
+        return False
+    
+    # Patterns indicating media titles
+    media_patterns = [
+        r'のテレビドラマ',
+        r'の日本映画',
+        r'の米国映画',
+        r'のアメリカ映画',
+        r'テレビ.*系列',
+        r'TBS.*放映',
+        r'フジテレビ.*制作',
+        r'\d{4}年.*公開',
+        r'\d{4}年\d+月～',
+        r'監督.*主演',
+        r'出演.*脚本',
+    ]
+    
+    for pattern in media_patterns:
+        if re.search(pattern, text):
+            return True
+    
+    return False
+
+
+def should_skip_sense(text):
+    """Check if a specific sense should be skipped"""
+    if not text or len(text) < 10:
+        return True
+    
+    # Skip if it's just a city/region name
+    if re.match(r'^[ぁ-ん\u4e00-\u9faf]+[市区町村県]の[ぁ-ん\u4e00-\u9faf]+。?$', text):
+        return True
+    
+    # Skip if it's media production details
+    if re.search(r'(監督|主演|出演|脚本|制作|放映|公開)[：:.]', text):
+        return True
+    
+    # Skip if it's just a year and title
+    if re.match(r'^\d{4}年', text) and len(text) < 30:
+        return True
+    
+    return False
+
+
 def clean_definition(text):
-    """Clean and limit definition text"""
+    """Clean and filter definition text"""
     if not text:
         return ''
     
@@ -47,28 +118,77 @@ def clean_definition(text):
     text = re.sub(r'\s+', ' ', text)
     text = text.strip()
     
-    # Remove references like (→word)
-    text = re.sub(r'[（(]→[^)）]+[)）]', '', text)
+    # Remove references
+    text = re.sub(r'[（(《]→[^)）》]+[)）》]', '', text)
+    
+    # Remove source citations
+    text = re.sub(r'〈[^〉]+〉', '', text)
+    
+    # Remove production details
+    text = re.sub(r'[。、]\s*(監督|主演|出演|脚本|制作|放映|公開)[：:.].*?(?=[。、]|$)', '', text)
+    
+    # Remove year ranges in media
+    text = re.sub(r'\d{4}年\d+月～\d{4}年\d+月', '', text)
+    
+    # Keep only first 2 quoted examples
+    quotes = re.findall(r'「[^」]+」', text)
+    if len(quotes) > 2:
+        for quote in quotes[2:]:
+            text = text.replace(quote, '')
+    
+    # Remove long parentheticals
+    text = re.sub(r'[（(][^)）]{40,}[)）]', '', text)
+    
+    # Remove cross-references
+    text = re.sub(r'[⇔↔][^\s。、]+', '', text)
+    
+    # Clean up spacing
+    text = re.sub(r'\s+', ' ', text)
+    text = text.strip()
     
     # Limit length
-    MAX_LENGTH = 250
+    MAX_LENGTH = 180
     if len(text) > MAX_LENGTH:
         cut = text[:MAX_LENGTH].rfind('。')
-        if cut > 150:
+        if cut > 100:
             text = text[:cut + 1]
         else:
-            text = text[:MAX_LENGTH] + '...'
+            cut = text[:MAX_LENGTH].rfind('、')
+            if cut > 100:
+                text = text[:cut + 1]
+            else:
+                text = text[:MAX_LENGTH] + '...'
     
     return text.strip()
 
 
+def extract_core_definition(text):
+    """Extract core definition, removing supplementary material"""
+    if not text:
+        return ''
+    
+    # Stop before supplementary markers
+    for marker in ['。「', '。《', '。〔']:
+        if marker in text:
+            parts = text.split(marker, 1)
+            if len(parts[0]) > 20:
+                text = parts[0] + '。'
+                break
+    
+    # Remove cascading examples
+    quote_pattern = r'(「[^」]{0,50}」.*?)「[^」]+」「[^」]+」'
+    text = re.sub(quote_pattern, r'\1', text)
+    
+    return text
+
+
 def split_into_senses(text):
-    """Split text by numbered markers into separate senses"""
+    """Split text by numbered markers, with limit"""
     if not text:
         return []
     
-    # Split by circled numbers or parenthesized letters
-    parts = re.split(r'([①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮]|㋐|㋑|㋒|㋓|㋔)', text)
+    # Split by markers
+    parts = re.split(r'([①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]|㋐|㋑|㋒|㋓|㋔)', text)
     
     senses = []
     current = ''
@@ -78,11 +198,13 @@ def split_into_senses(text):
         if not part:
             continue
         
-        # Check if marker
-        if re.match(r'^[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮㋐㋑㋒㋓㋔]$', part):
+        if re.match(r'^[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳㋐㋑㋒㋓㋔]$', part):
             if current.strip():
-                cleaned = clean_definition(current)
-                if cleaned:
+                core = extract_core_definition(current)
+                cleaned = clean_definition(core)
+                
+                # Skip if it should be filtered
+                if cleaned and len(cleaned) > 10 and not should_skip_sense(cleaned):
                     senses.append(cleaned)
             current = ''
         else:
@@ -90,27 +212,30 @@ def split_into_senses(text):
     
     # Add last sense
     if current.strip():
-        cleaned = clean_definition(current)
-        if cleaned:
+        core = extract_core_definition(current)
+        cleaned = clean_definition(core)
+        if cleaned and len(cleaned) > 10 and not should_skip_sense(cleaned):
             senses.append(cleaned)
     
-    # If no splits, return whole text
+    # If no splits or all filtered out
     if not senses:
-        cleaned = clean_definition(text)
-        return [cleaned] if cleaned else []
+        core = extract_core_definition(text)
+        cleaned = clean_definition(core)
+        if cleaned and len(cleaned) > 10 and not should_skip_sense(cleaned):
+            return [cleaned]
+        return []
     
-    # Limit to 5 most important senses
-    return senses[:5]
+    # Limit to 3 most important senses for clarity
+    MAX_SENSES = 3
+    return senses[:MAX_SENSES]
 
 
 def extract_definitions(structured_content):
-    """Extract definitions from structured content - simplified approach"""
+    """Extract definitions with filtering"""
     if not structured_content or not isinstance(structured_content, list):
         return []
     
-    # Skip these tags completely
     skip_tags = {'img'}
-    
     all_text = ''
     
     for item in structured_content:
@@ -118,7 +243,6 @@ def extract_definitions(structured_content):
             continue
         
         if item.get('type') == 'structured-content':
-            # Extract all text from this structured content
             text = extract_all_text(item.get('content', []), skip_tags)
             if text:
                 all_text += text + ' '
@@ -128,43 +252,51 @@ def extract_definitions(structured_content):
     if not all_text:
         return []
     
-    # Now intelligently filter the text
-    # Look for actual definition content (after the headword section)
+    # Check if should skip entire entry
+    if is_proper_noun_entry(all_text):
+        return []
     
-    # Try to find where definitions start (usually after 】 bracket)
+    if is_media_title_entry(all_text):
+        return []
+    
+    # Filter out headword section
     def_start = all_text.find('】')
     if def_start != -1:
         all_text = all_text[def_start + 1:].strip()
     
-    # Remove accent marks and symbols
-    all_text = re.sub(r'[⓪①②③④⑤⑥⑦⑧⑨](?!\s*[あ-ん])', '', all_text)
+    # Remove accent marks
+    all_text = re.sub(r'[⓪①②③④⑤⑥⑦⑧⑨](?=\s|$)', '', all_text)
     
-    # Remove 【kanji】 notation blocks at start
+    # Remove kanji notation blocks
     all_text = re.sub(r'^【[^】]+】\s*', '', all_text)
     
-    # Try to extract just the core definition parts
-    # Split into sentences and filter
-    sentences = []
+    # Remove counter information
+    all_text = re.sub(r'^[一二三四五六七八九十]+本。?', '', all_text)
     
-    # First try to split by sense markers
+    # Check if numbered senses exist
     if re.search(r'[①②③④⑤⑥⑦⑧⑨⑩]', all_text):
         return split_into_senses(all_text)
     
-    # Otherwise, take first few meaningful sentences
-    # Split by 。but keep sentences
-    parts = all_text.split('。')
-    for part in parts[:3]:  # Max 3 sentences
-        part = part.strip()
-        if len(part) > 10:  # Skip very short parts
-            sentences.append(part + '。')
+    # No numbered senses - extract first core definition
+    sentences = []
+    for sent in all_text.split('。')[:2]:
+        sent = sent.strip()
+        if len(sent) > 15:
+            core = extract_core_definition(sent + '。')
+            cleaned = clean_definition(core)
+            if cleaned and len(cleaned) > 10 and not should_skip_sense(cleaned):
+                sentences.append(cleaned)
     
     if sentences:
-        result = clean_definition(''.join(sentences))
-        return [result] if result else []
+        return sentences[:1]
     
-    # Fallback: just clean and return first 250 chars
-    cleaned = clean_definition(all_text)
-    return [cleaned] if cleaned else []
+    # Fallback
+    core = extract_core_definition(all_text)
+    cleaned = clean_definition(core)
+    if cleaned and len(cleaned) > 10 and not should_skip_sense(cleaned):
+        return [cleaned]
+    
+    return []
 
 
 def extract_reading(structured_content, fallback_reading):
@@ -179,7 +311,6 @@ def extract_reading(structured_content, fallback_reading):
         if item.get('type') != 'structured-content':
             continue
         
-        # Look for reading in the structure
         def find_reading(elem):
             if not isinstance(elem, dict):
                 return None
@@ -188,13 +319,11 @@ def extract_reading(structured_content, fallback_reading):
             if name == '見出仮名':
                 text = extract_all_text(elem.get('content'))
                 if text:
-                    # Clean reading
                     text = text.replace(' ', '').replace('　', '')
                     text = re.sub(r'[⓪①②③④⑤⑥⑦⑧⑨]', '', text)
                     text = text.replace('【', '').replace('】', '')
                     return text.strip()
             
-            # Recurse
             if 'content' in elem:
                 content = elem['content']
                 if isinstance(content, list):
@@ -212,6 +341,47 @@ def extract_reading(structured_content, fallback_reading):
             return result
     
     return fallback_reading
+
+
+def extract_pos(structured_content):
+    """Extract part of speech"""
+    if not structured_content or not isinstance(structured_content, list):
+        return []
+    
+    pos_list = []
+    
+    for item in structured_content:
+        if not isinstance(item, dict):
+            continue
+        
+        if item.get('type') != 'structured-content':
+            continue
+        
+        def find_pos(elem):
+            if not isinstance(elem, dict):
+                return
+            
+            name = elem.get('data', {}).get('name', '')
+            
+            if name in ['品詞', 'hinshi', 'FM', '品詞G']:
+                text = extract_all_text(elem.get('content'))
+                if text and text.strip():
+                    cleaned = text.strip().replace('〘', '').replace('〙', '').strip()
+                    if cleaned and cleaned not in pos_list:
+                        pos_list.append(cleaned)
+                return
+            
+            if 'content' in elem:
+                content = elem['content']
+                if isinstance(content, list):
+                    for child in content:
+                        find_pos(child)
+                else:
+                    find_pos(content)
+        
+        find_pos(item)
+    
+    return pos_list
 
 
 def has_kanji(text):
@@ -237,11 +407,14 @@ def convert_entry(entry, index, base_seq):
         if reading:
             reading = reading.replace(' ', '')
         
-        # Get definitions
+        # Get definitions (with filtering)
         glosses = extract_definitions(definitions)
         
         if not glosses or not any(g for g in glosses):
             return None, False
+        
+        # Get POS
+        pos_array = extract_pos(definitions)
         
         # Build entry
         entry_dict = {
@@ -269,7 +442,9 @@ def convert_entry(entry, index, base_seq):
             if gloss and gloss.strip():
                 sense = {'gloss': [gloss]}
                 
-                # Add misc if present
+                if pos_array:
+                    sense['pos'] = pos_array
+                
                 misc = []
                 if def_tags and def_tags.strip():
                     misc.append(def_tags.strip())
@@ -285,7 +460,6 @@ def convert_entry(entry, index, base_seq):
         return entry_dict, True
         
     except Exception as e:
-        print(f"    Error at {index}: {e}")
         return None, False
 
 
@@ -326,6 +500,7 @@ def main():
     """Main"""
     print("=" * 60)
     print("Daijisen to JMDict Converter")
+    print("With proper noun and media title filtering")
     print("=" * 60)
     
     files = sorted(Path('.').glob('term_bank_*.json'))
@@ -349,7 +524,6 @@ def main():
     
     if not all_entries:
         print("\n✗ No entries converted!")
-        print("Check if term_bank files have the expected structure.")
         return
     
     # Write output
@@ -362,17 +536,22 @@ def main():
     # Preview
     preview = 'JMdict_converted_preview.json'
     with open(preview, 'w', encoding='utf-8') as f:
-        json.dump(all_entries[:10], f, ensure_ascii=False, indent=2)
+        json.dump(all_entries[:20], f, ensure_ascii=False, indent=2)
     
     # Summary
     print("\n" + "=" * 60)
     print(f"Files: {len(files)}")
     print(f"Converted: {total_conv:,}")
     print(f"Skipped: {total_skip:,}")
+    print(f"Success rate: {total_conv/(total_conv+total_skip)*100:.1f}%")
     print(f"Output: {output} ({os.path.getsize(output)/1024/1024:.1f} MB)")
-    print(f"Preview: {preview}")
+    print(f"Preview: {preview} (20 entries)")
     print("=" * 60)
     print("✓ Done!")
+    print("\nFiltering applied:")
+    print("  - Place names (市の区名, etc.)")
+    print("  - Media titles (映画, ドラマ, etc.)")
+    print("  - Limited to 3 senses per entry")
 
 
 if __name__ == '__main__':
