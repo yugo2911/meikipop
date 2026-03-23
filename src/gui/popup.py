@@ -50,7 +50,8 @@ class Popup(QWidget):
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.Tool
+            Qt.WindowType.Tool |
+            Qt.WindowType.ToolTip
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setStyleSheet("background: transparent;")
@@ -329,6 +330,7 @@ class Popup(QWidget):
         screen_geo = screen.geometry()
         popup_size = self.size()
         offset = 15
+                     
         ratio = screen.devicePixelRatio()
         x, y = magpie_manager.transform_raw_to_visual((int(x), int(y)), ratio)
 
