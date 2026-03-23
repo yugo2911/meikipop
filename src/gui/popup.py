@@ -5,12 +5,13 @@ from typing import List, Optional
 
 from PyQt6.QtCore import QTimer, QPoint, QSize
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QCursor, QFont, QFontMetrics, QFontInfo
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QFontInfo
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QApplication
 
-from src.config.config import config, IS_MACOS
+from src.config.config import config, IS_MACOS, IS_LINUX
 from src.dictionary.lookup import DictionaryEntry, KanjiEntry
 from src.gui.magpie_manager import magpie_manager
+from src.gui.input import _is_wayland
 
 # macOS-specific imports for focus management
 if IS_MACOS:
@@ -174,8 +175,8 @@ class Popup(QWidget):
         else:
             self.hide_popup()
 
-        mouse_pos = QCursor.pos()
-        self.move_to(mouse_pos.x(), mouse_pos.y())
+        mx, my = self.input_loop.get_mouse_pos()
+        self.move_to(mx, my)
 
     def _render_kanji_entry(self, entry: KanjiEntry):
         # Colors and sizes from config
@@ -329,8 +330,10 @@ class Popup(QWidget):
         popup_size = self.size()
         offset = 15
 
-        ratio = screen.devicePixelRatio()
-        x, y = magpie_manager.transform_raw_to_visual((int(x), int(y)), ratio)
+        # Magpie is Windows-only, skip on Wayland
+        if not (IS_LINUX and _is_wayland()):
+            ratio = screen.devicePixelRatio()
+            x, y = magpie_manager.transform_raw_to_visual((int(x), int(y)), ratio)
 
         # --- Positioning logic based on mode ---
         mode = config.popup_position_mode

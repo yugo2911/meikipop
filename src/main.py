@@ -49,6 +49,7 @@ def main():
     original_handler = qInstallMessageHandler(qt_message_handler)
 
     app = QApplication(sys.argv)
+    app.setDesktopFileName("meikipop")  # sets Wayland app-id
     app.setQuitOnLastWindowClosed(False)
 
     input_loop = InputLoop(shared_state)
