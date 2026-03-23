@@ -1,5 +1,8 @@
 # src/screenshot/screenmanager.py
 import logging
+import os
+import subprocess
+import tempfile
 import threading
 import time
 
@@ -7,6 +10,7 @@ import mss
 from PIL import Image
 
 from src.config.config import config
+from src.gui.input import _is_wayland
 from src.gui.region_selector import RegionSelector
 
 logger = logging.getLogger(__name__) # Get the logger
@@ -66,14 +70,15 @@ class ScreenManager(threading.Thread):
                 processing_duration = time.perf_counter() - start_time
                 logger.debug(f"Screenshot {screenshot.size} complete in {processing_duration:.2f}s")
 
-                if self.last_screenshot and self.last_screenshot.raw == screenshot.raw:
-                    logger.debug(f"Screen content didnt change... skipping ocr")
-                    self._sleep_and_handle_loop_exit(0.1)
-                    continue
+                if not isinstance(screenshot, Image.Image):
+                    if self.last_screenshot and self.last_screenshot.raw == screenshot.raw:
+                        logger.debug(f"Screen content didnt change... skipping ocr")
+                        self._sleep_and_handle_loop_exit(0.1)
+                        continue
 
                 self.last_screenshot = screenshot
                 self.last_mouse_pos = self.input_loop.get_mouse_pos()
-                img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
+                img = screenshot if isinstance(screenshot, Image.Image) else Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
                 self.shared_state.ocr_queue.put(img)
                 self.last_ocr_put_time = time.perf_counter()
             except:
@@ -82,9 +87,20 @@ class ScreenManager(threading.Thread):
         logger.debug("Screenshot thread stopped.")
 
     def take_screenshot(self):
-        with mss.mss() as sct:
-            sct_img = sct.grab(self.monitor)
-            return sct_img
+        if _is_wayland():
+            m = self.monitor
+            region = f"{m['left']},{m['top']} {m['width']}x{m['height']}"
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
+                tmp_path = f.name
+            subprocess.run(['grim', '-g', region, tmp_path], check=True, stderr=subprocess.DEVNULL)
+            img = Image.open(tmp_path)
+            img.load()
+            os.unlink(tmp_path)
+            return img
+        else:
+            with mss.mss() as sct:
+                sct_img = sct.grab(self.monitor)
+                return sct_img
 
     def set_scan_region(self):
         scan_rect = RegionSelector.get_region()
