@@ -109,11 +109,17 @@ class ScreenManager(threading.Thread):
                         f'string:{tmp_path}'
                     ], check=True, stderr=subprocess.DEVNULL)
                 except (FileNotFoundError, subprocess.CalledProcessError):
-                    # KDE fallback: spectacle
-                    subprocess.run(
-                        ['spectacle', '-b', '-n', '-o', tmp_path],
-                        check=True, stderr=subprocess.DEVNULL
-                    )
+                    try:
+                        # KDE fallback: spectacle
+                        subprocess.run(
+                            ['spectacle', '-b', '-n', '-o', tmp_path],
+                            check=True, stderr=subprocess.DEVNULL
+                        )
+                    except (FileNotFoundError, subprocess.CalledProcessError):
+                        # GNOME: gnome-screenshot
+                        subprocess.run([
+                            'gnome-screenshot', '-a', '-f', tmp_path
+                        ], check=True, stderr=subprocess.DEVNULL)
             img = Image.open(tmp_path)
             img.load()
             os.unlink(tmp_path)
