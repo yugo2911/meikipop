@@ -89,10 +89,31 @@ class ScreenManager(threading.Thread):
     def take_screenshot(self):
         if _is_wayland():
             m = self.monitor
-            region = f"{m['left']},{m['top']} {m['width']}x{m['height']}"
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
                 tmp_path = f.name
-            subprocess.run(['grim', '-g', region, tmp_path], check=True, stderr=subprocess.DEVNULL)
+            try:
+                # Hyprland / wlroots: grim
+                region = f"{m['left']},{m['top']} {m['width']}x{m['height']}"
+                subprocess.run(['grim', '-g', region, tmp_path], check=True, stderr=subprocess.DEVNULL)
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                try:
+                    # KDE 5.25+ / KWin: ScreenShot2 DBus interface (no extra deps)
+                    subprocess.run([
+                        'dbus-send', '--session', '--print-reply=literal',
+                        '--dest=org.kde.KWin.ScreenShot2',
+                        '/org/kde/KWin/ScreenShot2',
+                        'org.kde.KWin.ScreenShot2.CaptureArea',
+                        f'int32:{m["left"]}', f'int32:{m["top"]}',
+                        f'int32:{m["width"]}', f'int32:{m["height"]}',
+                        'uint32:0',
+                        f'string:{tmp_path}'
+                    ], check=True, stderr=subprocess.DEVNULL)
+                except (FileNotFoundError, subprocess.CalledProcessError):
+                    # KDE fallback: spectacle
+                    subprocess.run(
+                        ['spectacle', '-b', '-n', '-o', tmp_path],
+                        check=True, stderr=subprocess.DEVNULL
+                    )
             img = Image.open(tmp_path)
             img.load()
             os.unlink(tmp_path)

@@ -53,6 +53,13 @@ class Popup(QWidget):
             Qt.WindowType.Tool |
             Qt.WindowType.ToolTip
         )
+        
+        # KDE/KWin on Wayland needs X11BypassWindowManagerHint suppressed
+        # and WindowDoesNotAcceptFocus to prevent focus steal
+        if IS_LINUX and _is_wayland():
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+            self.setWindowFlag(Qt.WindowType.WindowDoesNotAcceptFocus, True)
+
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setStyleSheet("background: transparent;")
 
