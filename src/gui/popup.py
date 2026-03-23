@@ -329,11 +329,8 @@ class Popup(QWidget):
         screen_geo = screen.geometry()
         popup_size = self.size()
         offset = 15
-
-        # Magpie is Windows-only, skip on Wayland
-        if not (IS_LINUX and _is_wayland()):
-            ratio = screen.devicePixelRatio()
-            x, y = magpie_manager.transform_raw_to_visual((int(x), int(y)), ratio)
+        ratio = screen.devicePixelRatio()
+        x, y = magpie_manager.transform_raw_to_visual((int(x), int(y)), ratio)
 
         # --- Positioning logic based on mode ---
         mode = config.popup_position_mode
