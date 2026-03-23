@@ -1,0 +1,18 @@
+#!/bin/bash
+
+APP_ROOT="/home/tsubasa/Work/meikipop/meikipop"
+ICON_PATH="$APP_ROOT/src/resources/icon.ico"
+TARGET="$HOME/.local/share/applications/meikipop.desktop"
+
+cat <<EOF > "$TARGET"
+[Desktop Entry]
+Name=Meikipop
+Exec=env PYTHON_GIL=1 python -m src.main
+Path=$APP_ROOT
+Icon=$ICON_PATH
+Terminal=false
+Type=Application
+Categories=Utility;
+EOF
+
+update-desktop-database ~/.local/share/applications/
