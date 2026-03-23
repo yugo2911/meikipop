@@ -211,7 +211,7 @@ class InputLoop(threading.Thread):
                 self.keyboard_controller = LinuxX11KeyboardController(self.hotkey_str)
         elif IS_MACOS:
             self.keyboard_controller = MacOSKeyboardController(self.hotkey_str)
-        else:
+        else: # IS_WINDOWS
             self.keyboard_controller = WindowsKeyboardController(self.hotkey_str)
 
         self.started_auto_mode = False
@@ -232,17 +232,21 @@ class InputLoop(threading.Thread):
                 except Exception:
                     hotkey_is_pressed = False
 
+                # trigger screenshots + ocr in manual mode
                 if hotkey_is_pressed and not hotkey_was_pressed and not config.auto_scan_mode:
                     logger.info(f"Input: Hotkey '{config.hotkey}' pressed. Triggering screenshot.")
                     self.shared_state.screenshot_trigger_event.set()
 
+                # trigger initial screenshots + ocr in auto mode
                 if not self.started_auto_mode and config.auto_scan_mode:
                     self.shared_state.screenshot_trigger_event.set()
                 self.started_auto_mode = config.auto_scan_mode
 
+                # trigger screenshots + ocr in auto-on-mouse-move mode
                 if config.auto_scan_mode and config.auto_scan_on_mouse_move and current_mouse_pos != last_mouse_pos:
                     self.shared_state.screenshot_trigger_event.set()
 
+                # trigger hit_scans + lookups
                 if current_mouse_pos != last_mouse_pos:
                     self.shared_state.hit_scan_queue.put((False, None))
 
@@ -272,7 +276,7 @@ class InputLoop(threading.Thread):
                 self.keyboard_controller = LinuxX11KeyboardController(self.hotkey_str)
         elif IS_MACOS:
             self.keyboard_controller = MacOSKeyboardController(self.hotkey_str)
-        else:
+        else: # IS_WINDOWS
             self.keyboard_controller = WindowsKeyboardController(self.hotkey_str)
 
     @staticmethod
@@ -286,4 +290,5 @@ class InputLoop(threading.Thread):
                 pass
         with mouse.Controller() as mc:
             pos = mc.position
+            # Convert floats to integers for QPoint compatibility
             return (int(pos[0]), int(pos[1]))
