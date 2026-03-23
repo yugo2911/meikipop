@@ -3,15 +3,24 @@ import logging
 import sys
 import threading
 import time
+import subprocess
+import json
+import os
 
 from pynput import mouse
 
 from src.config.config import config, IS_LINUX, IS_MACOS
 
+def _is_wayland():
+    return bool(os.environ.get('WAYLAND_DISPLAY'))
+
 if IS_LINUX:
-    from Xlib import display as xlib_display
-    from Xlib.error import XError
-    from Xlib import XK
+    if not _is_wayland():
+        from Xlib import display as xlib_display
+        from Xlib.error import XError
+        from Xlib import XK
+    else:
+        import evdev
 elif IS_MACOS:
     import Quartz
     from AppKit import NSEvent
@@ -20,6 +29,33 @@ else:
 
 
 logger = logging.getLogger(__name__)
+
+class WaylandKeyboardController:
+    def __init__(self, hotkey_str):
+        self.hotkey_str = hotkey_str.lower()
+        self.devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
+        self.key_map = {
+            'shift': [evdev.ecodes.KEY_LEFTSHIFT, evdev.ecodes.KEY_RIGHTSHIFT],
+            'ctrl': [evdev.ecodes.KEY_LEFTCTRL, evdev.ecodes.KEY_RIGHTCTRL],
+            'alt': [evdev.ecodes.KEY_LEFTALT, evdev.ecodes.KEY_RIGHTALT]
+        }
+        self.target_codes = []
+        for part in self.hotkey_str.split('+'):
+            if part in self.key_map:
+                self.target_codes.append(self.key_map[part])
+
+    def is_hotkey_pressed(self) -> bool:
+        # Note: This requires read permissions on /dev/input/
+        try:
+            for device in self.devices:
+                capabilities = device.leds() # Simple check for device availability
+                pressed = device.active_keys()
+                for group in self.target_codes:
+                    if any(code in pressed for code in group):
+                        return True
+            return False
+        except Exception:
+            return False
 
 class LinuxX11KeyboardController:
     def __init__(self, hotkey_str):
@@ -142,7 +178,10 @@ class InputLoop(threading.Thread):
 
         self.hotkey_str = config.hotkey.lower()
         if IS_LINUX:
-            self.keyboard_controller = LinuxX11KeyboardController(self.hotkey_str)
+            if _is_wayland():
+                self.keyboard_controller = WaylandKeyboardController(self.hotkey_str)
+            else:
+                self.keyboard_controller = LinuxX11KeyboardController(self.hotkey_str)
         elif IS_MACOS:
             self.keyboard_controller = MacOSKeyboardController(self.hotkey_str)
         else: # IS_WINDOWS
@@ -160,7 +199,7 @@ class InputLoop(threading.Thread):
                 time.sleep(0.1)
                 continue
             try:
-                current_mouse_pos = self.mouse_controller.position
+                current_mouse_pos = self.get_mouse_pos()
                 try:
                     hotkey_is_pressed = self.keyboard_controller.is_hotkey_pressed()
                 except Exception:
@@ -204,7 +243,10 @@ class InputLoop(threading.Thread):
         logger.debug(f"InputLoop: Re-applying settings. New hotkey: '{config.hotkey}'.")
         self.hotkey_str = config.hotkey.lower()
         if IS_LINUX:
-            self.keyboard_controller = LinuxX11KeyboardController(self.hotkey_str)
+            if _is_wayland():
+                self.keyboard_controller = WaylandKeyboardController(self.hotkey_str)
+            else:
+                self.keyboard_controller = LinuxX11KeyboardController(self.hotkey_str)
         elif IS_MACOS:
             self.keyboard_controller = MacOSKeyboardController(self.hotkey_str)
         else: # IS_WINDOWS
@@ -212,7 +254,16 @@ class InputLoop(threading.Thread):
 
     @staticmethod
     def get_mouse_pos():
+        # Wayland/Hyprland specific check
+        if IS_LINUX and _is_wayland():
+            try:
+                res = subprocess.check_output(["hyprctl", "cursorpos", "-j"], stderr=subprocess.DEVNULL)
+                pos = json.loads(res)
+                return (int(pos['x']), int(pos['y']))
+            except Exception:
+                pass
+        
+        # Fallback to pynput
         with mouse.Controller() as mc:
             pos = mc.position
-            # Convert floats to integers for QPoint compatibility
             return (int(pos[0]), int(pos[1]))
